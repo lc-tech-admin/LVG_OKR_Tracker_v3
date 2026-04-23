@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LVG — OKR Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:         #111111;
+  --surface:    #1a1a1a;
+  --surface2:   #222222;
+  --surface3:   #2a2a2a;
+  --border:     rgba(255,255,255,0.07);
+  --border2:    rgba(255,255,255,0.13);
+  --text:       #f0f0f0;
+  --text2:      #aaaaaa;
+  --text3:      #555555;
+  --orange:     #ff6b00;
+  --green:      #4caf50;
+  --green-bg:   rgba(76,175,80,0.12);
+  --amber:      #ffb300;
+  --amber-bg:   rgba(255,179,0,0.12);
+  --red:        #f44336;
+  --red-bg:     rgba(244,67,54,0.12);
+  --radius:     12px;
+  --radius-sm:  8px;
+}
+
+body {
+  font-family: 'DM Sans', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+
+/* ── Header ─────────────────────────────────── */
+header {
+  background: #000;
+  border-bottom: 2px solid var(--orange);
+  padding: 18px 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.logo       { font-size: 13px; font-weight: 700; color: var(--orange); letter-spacing: 0.14em; text-transform: uppercase; }
+.header-sub { font-size: 12px; color: var(--text3); margin-top: 3px; }
+.header-right { display: flex; align-items: center; gap: 16px; }
+.last-synced  { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--text3); }
+
+/* ── Buttons ────────────────────────────────── */
+.btn-refresh {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 8px 18px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--orange);
+  color: #000;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: opacity 0.2s;
+}
+.btn-refresh:hover    { opacity: 0.85; }
+.btn-refresh:disabled { background: var(--surface2); color: var(--text3); cursor: not-allowed; opacity: 1; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { display: inline-block; animation: spin 0.8s linear infinite; }
+
+/* ── Container ──────────────────────────────── */
+.container { max-width: 1040px; margin: 0 auto; padding: 28px 24px; }
+
+/* ── Error / info banners ───────────────────── */
+.banner {
+  border-radius: var(--radius-sm);
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  font-size: 12px;
+  line-height: 1.6;
+  display: none;
+}
+.banner.visible { display: block; }
+.banner-error { background: var(--red-bg); border: 1px solid rgba(244,67,54,0.25); color: var(--red); }
+.banner-info  { background: var(--amber-bg); border: 1px solid rgba(255,179,0,0.25); color: var(--amber); }
+
+/* ── OKR Cards ──────────────────────────────── */
+.okr-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px 24px;
+  margin-bottom: 16px;
+}
+.okr-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 18px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.okr-title { font-size: 15px; font-weight: 600; }
+.okr-meta  { font-size: 12px; color: var(--text3); margin-top: 3px; }
+
+/* ── Badges ─────────────────────────────────── */
+.badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 13px;
+  border-radius: 20px;
+  white-space: nowrap;
+  letter-spacing: 0.04em;
+}
+.badge-green   { background: var(--green-bg); color: var(--green); }
+.badge-amber   { background: var(--amber-bg); color: var(--amber); }
+.badge-red     { background: var(--red-bg);   color: var(--red);   }
+.badge-gray    { background: var(--surface2); color: var(--text3); }
+
+/* ── Summary strip ──────────────────────────── */
+.summary-strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-bottom: 20px;
+}
+.sum-card {
+  background: var(--surface2);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+}
+.sum-label { font-size: 11px; color: var(--text3); margin-bottom: 4px; font-weight: 500; }
+.sum-val   { font-size: 22px; font-weight: 700; color: var(--orange); font-family: 'DM Mono', monospace; }
+.sum-sub   { font-size: 11px; color: var(--text3); margin-top: 2px; }
+
+/* ── Tables ─────────────────────────────────── */
+.data-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.data-table th {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 0 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--border2);
+}
+.data-table th.tc { text-align: center; }
+.data-table td {
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.data-table tr:last-child td { border-bottom: none; }
+.data-table tr:hover td { background: rgba(255,255,255,0.02); }
+.data-table .tc   { text-align: center; }
+.data-table .mono { font-family: 'DM Mono', monospace; }
+.data-table .dim  { color: var(--text2); font-size: 11px; }
+.data-table .prop { font-weight: 500; font-size: 12.5px; }
+
+/* ── Mini bar ───────────────────────────────── */
+.mini-bar-wrap { height: 4px; background: var(--surface3); border-radius: 2px; overflow: hidden; min-width: 70px; }
+.mini-bar      { height: 4px; border-radius: 2px; transition: width 0.4s ease; }
+
+/* ── Pills ──────────────────────────────────── */
+.pill {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 10px;
+}
+.pill-green  { background: var(--green-bg); color: var(--green); }
+.pill-orange { background: rgba(255,107,0,0.12); color: var(--orange); }
+.pill-amber  { background: var(--amber-bg); color: var(--amber); }
+.pill-red    { background: var(--red-bg);   color: var(--red);   }
+.pill-gray   { background: var(--surface2); color: var(--text3); }
+
+.var-pill { font-family: 'DM Mono', monospace; font-weight: 700; }
+
+/* ── KR bars ─────────────────────────────────── */
+.metrics-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.metric-card {
+  background: var(--surface2);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+}
+.metric-label { font-size: 11px; color: var(--text3); margin-bottom: 4px; font-weight: 500; }
+.metric-val   { font-size: 22px; font-weight: 700; color: var(--orange); font-family: 'DM Mono', monospace; }
+
+.kr-block { margin-bottom: 14px; }
+.kr-top   { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.kr-label { font-size: 12px; color: var(--text2); flex: 1; }
+.kr-val   { font-family: 'DM Mono', monospace; font-size: 12px; font-weight: 600; color: var(--orange); margin-left: 12px; }
+.kr-bar-wrap { height: 5px; background: var(--surface2); border-radius: 3px; overflow: hidden; margin-bottom: 10px; }
+.kr-bar      { height: 5px; border-radius: 3px; transition: width 0.5s ease, background 0.3s; }
+
+.divider { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+.section-sub {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 12px;
+}
+
+/* ── Empty / loading states ─────────────────── */
+.empty { text-align: center; color: var(--text3); padding: 28px 8px !important; font-size: 12px; }
+
+footer {
+  text-align: center;
+  padding: 24px;
+  font-size: 11px;
+  color: #333;
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+}
+</style>
+</head>
+<body>
+
+<!-- ── Header ── -->
+<header>
+  <div>
+    <div class="logo">Leverage Companies &nbsp;|&nbsp; LVG Homes</div>
+    <div class="header-sub">OKR Dashboard — Matt Silva, Head of Project Management</div>
+  </div>
+  <div class="header-right">
+    <span class="last-synced" id="last-synced"></span>
+    <button class="btn-refresh" id="btn-refresh" onclick="loadDashboard()">↻ Refresh</button>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- Banners -->
+  <div class="banner banner-error" id="banner-error"></div>
+  <div class="banner banner-info"  id="banner-info">
+    ℹ Make sure your Google Sheet is shared: <strong>Anyone with the link → Viewer</strong>. 
+    Then click Refresh.
+  </div>
+
+  <!-- ═══════════════════════════════════
+       OKR 1 — Construction Timeline
+  ════════════════════════════════════ -->
+  <div class="okr-card">
+    <div class="okr-header">
+      <div>
+        <div class="okr-title">Construction timeline adherence</div>
+        <div class="okr-meta">Target completion date vs actual status — tracked per deal</div>
+      </div>
+      <span class="badge badge-gray" id="badge-1">Loading…</span>
+    </div>
+    <div class="summary-strip">
+      <div class="sum-card"><div class="sum-label">Active deals</div><div class="sum-val" id="t-total">—</div></div>
+      <div class="sum-card"><div class="sum-label">On time</div><div class="sum-val" id="t-ontime">—</div><div class="sum-sub">hit target date</div></div>
+      <div class="sum-card"><div class="sum-label">Delayed</div><div class="sum-val" id="t-delayed">—</div><div class="sum-sub">behind schedule</div></div>
+      <div class="sum-card"><div class="sum-label">Ahead</div><div class="sum-val" id="t-ahead">—</div><div class="sum-sub">early finish</div></div>
+    </div>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th style="width:230px">Property</th>
+          <th class="tc">Target date</th>
+          <th class="tc">Status</th>
+          <th class="tc">Days off</th>
+          <th style="width:110px">Timeline</th>
+        </tr>
+      </thead>
+      <tbody id="tbody-timeline">
+        <tr><td colspan="5" class="empty">Fetching data from Google Sheets…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ═══════════════════════════════════
+       OKR 2 — Budget Control
+  ════════════════════════════════════ -->
+  <div class="okr-card">
+    <div class="okr-header">
+      <div>
+        <div class="okr-title">Budget control and construction spend</div>
+        <div class="okr-meta">Approved budget vs paid to date vs projected final — tracked per deal</div>
+      </div>
+      <span class="badge badge-gray" id="badge-2">Loading…</span>
+    </div>
+    <div class="summary-strip">
+      <div class="sum-card"><div class="sum-label">Total budget</div><div class="sum-val" id="b-total">—</div></div>
+      <div class="sum-card"><div class="sum-label">Paid to date</div><div class="sum-val" id="b-paid">—</div></div>
+      <div class="sum-card"><div class="sum-label">Projected total</div><div class="sum-val" id="b-proj">—</div></div>
+      <div class="sum-card"><div class="sum-label">Under budget</div><div class="sum-val" id="b-under">—</div><div class="sum-sub" id="b-under-sub"></div></div>
+    </div>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th style="width:230px">Property</th>
+          <th class="tc">Budget ($K)</th>
+          <th class="tc">Paid ($K)</th>
+          <th class="tc">Projected ($K)</th>
+          <th class="tc">Variance</th>
+          <th style="width:110px">vs Budget</th>
+        </tr>
+      </thead>
+      <tbody id="tbody-budget">
+        <tr><td colspan="6" class="empty">Fetching data from Google Sheets…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ═══════════════════════════════════
+       OKR 3 — Lender Pipeline
+  ════════════════════════════════════ -->
+  <div class="okr-card">
+    <div class="okr-header">
+      <div>
+        <div class="okr-title">Lender pipeline — loans to closing table</div>
+        <div class="okr-meta">Pipeline velocity from submission to funded, zero delays on our end</div>
+      </div>
+      <span class="badge badge-gray" id="badge-3">Loading…</span>
+    </div>
+
+    <div class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-label">Loans closed (QTD)</div>
+        <div class="metric-val" id="m3-closed">—</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Avg days to close</div>
+        <div class="metric-val" id="m3-days">—</div>
+      </div>
+    </div>
+
+    <div class="kr-block">
+      <div class="kr-top">
+        <span class="kr-label">Target: 15 loans closed this quarter</span>
+        <span class="kr-val" id="v3-loans">—</span>
+      </div>
+      <div class="kr-bar-wrap"><div class="kr-bar" id="b3-loans"></div></div>
+    </div>
+    <hr class="divider">
+    <div class="kr-block">
+      <div class="kr-top">
+        <span class="kr-label">Target: under 21 days submission to close</span>
+        <span class="kr-val" id="v3-days">—</span>
+      </div>
+      <div class="kr-bar-wrap"><div class="kr-bar" id="b3-days"></div></div>
+    </div>
+    <hr class="divider">
+    <div class="kr-block">
+      <div class="kr-top">
+        <span class="kr-label">Target: zero delays on our end</span>
+        <span class="kr-val" id="v3-delays">—</span>
+      </div>
+      <div class="kr-bar-wrap"><div class="kr-bar" id="b3-delays"></div></div>
+    </div>
+
+    <hr class="divider">
+    <div class="section-sub">Loan pipeline detail</div>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th style="width:220px">Property</th>
+          <th>Lender</th>
+          <th class="tc">Submitted</th>
+          <th class="tc">Funded</th>
+          <th class="tc">Days</th>
+          <th class="tc">Our delay?</th>
+        </tr>
+      </thead>
+      <tbody id="tbody-pipeline">
+        <tr><td colspan="6" class="empty">Fetching data from Google Sheets…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+<footer>Leverage Companies &nbsp;·&nbsp; LVG Homes &nbsp;·&nbsp; Confidential — Internal Use Only</footer>
+
+<script>
+// ─────────────────────────────────────────────────────────
+//  CONFIG — your sheet ID is already set
+// ─────────────────────────────────────────────────────────
+const SHEET_ID = '1Zfw7CSFFeZbJx5M22MYTr94Iutp8l43K';
+
+// Sheet tab names — update these if you rename tabs in Sheets
+const TABS = {
+  deals:    'Deal Detail',
+  pipeline: 'Lender Pipeline',
+};
+
+// Row ranges — A[n] means the header row is at row n in the sheet
+// Change these if you add/remove title rows at the top of your sheets
+const RANGES = {
+  deals:    'A3:J60',   // Deal Detail: row 3 = headers, rows 4+ = data
+  pipeline: 'A3:H40',  // Lender Pipeline: row 3 = headers, rows 4+ = data
+};
+
+// ─────────────────────────────────────────────────────────
+//  GOOGLE SHEETS FETCH  (gviz API — no API key needed)
+//  Requires: Sheet shared as "Anyone with link → Viewer"
+// ─────────────────────────────────────────────────────────
+async function fetchGviz(tabName, range) {
+  const q = new URLSearchParams({ tqx: 'out:json', sheet: tabName });
+  if (range) q.set('range', range);
+  const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?${q}`;
+
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status} — failed to reach Google Sheets`);
+
+  const text = await res.text();
+  const i = text.indexOf('{');
+  const j = text.lastIndexOf('}') + 1;
+  if (i === -1) throw new Error(`Unexpected response from sheet "${tabName}". Is it shared publicly?`);
+
+  return JSON.parse(text.slice(i, j));
+}
+
+// Convert gviz response to array of plain row objects keyed by column header
+function gvizToRows(data) {
+  const cols = (data.table?.cols || []).map(c => (c.label || c.id || '').trim());
+  return (data.table?.rows || [])
+    .map(row => {
+      const obj = {};
+      (row.c || []).forEach((cell, i) => {
+        if (cols[i]) obj[cols[i]] = cell?.v ?? null;
+      });
+      return obj;
+    })
+    .filter(r => Object.values(r).some(v => v !== null && v !== '' && v !== undefined));
+}
+
+// ─────────────────────────────────────────────────────────
+//  HELPERS
+// ─────────────────────────────────────────────────────────
+function parseMoney(v) {
+  if (v === null || v === undefined) return 0;
+  if (typeof v === 'number') return v;
+  return parseFloat(String(v).replace(/[$,\s]/g, '')) || 0;
+}
+
+function fmtK(n) {
+  if (!n) return '—';
+  return '$' + Math.round(n / 1000) + 'K';
+}
+
+function barColor(pct, inverse = false) {
+  if (inverse) {
+    if (pct <= 30) return '#4caf50';
+    if (pct <= 65) return '#ffb300';
+    return '#f44336';
+  }
+  if (pct >= 75) return '#4caf50';
+  if (pct >= 45) return '#ffb300';
+  return '#f44336';
+}
+
+function applyBar(id, pct, inverse = false) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const clamped = Math.min(100, Math.max(0, pct || 0));
+  el.style.width      = clamped + '%';
+  el.style.background = barColor(clamped, inverse);
+}
+
+function setBadge(id, score) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (score < 0) { el.className = 'badge badge-gray'; el.textContent = '—'; return; }
+  if (score >= 75) { el.className = 'badge badge-green'; el.textContent = 'On track'; }
+  else if (score >= 45) { el.className = 'badge badge-amber'; el.textContent = 'At risk'; }
+  else { el.className = 'badge badge-red';   el.textContent = 'Off track'; }
+}
+
+// Work out on-time status from the row data
+function getStatus(row) {
+  const raw  = String(row['On Time?'] || '').trim().toLowerCase();
+  const days = parseFloat(row['Days Off']) || 0;
+  if (raw.includes('on time') || raw.includes('✅')) return 'on_time';
+  if (raw.includes('ahead') || days < 0)              return 'ahead';
+  if (days > 0)                                        return 'delayed';
+  return 'pending';
+}
+
+function statusPill(s) {
+  const map = {
+    on_time: ['pill pill-green',  'On Time' ],
+    ahead:   ['pill pill-orange', 'Ahead'   ],
+    delayed: ['pill pill-red',    'Delayed' ],
+    pending: ['pill pill-gray',   'Pending' ],
+  };
+  const [cls, label] = map[s] || map.pending;
+  return `<span class="${cls}">${label}</span>`;
+}
+
+function varPill(variance, budget) {
+  if (!budget) return `<span class="pill pill-gray var-pill">—</span>`;
+  const absPct = Math.abs(Math.round((variance / budget) * 100));
+  if (variance >= 0)          return `<span class="pill pill-green  var-pill">-${absPct}%</span>`;
+  if (absPct <= 5)            return `<span class="pill pill-amber  var-pill">+${absPct}%</span>`;
+  return                             `<span class="pill pill-red    var-pill">+${absPct}%</span>`;
+}
+
+function showBanner(type, msg) {
+  const el = document.getElementById('banner-' + type);
+  if (!el) return;
+  el.innerHTML  = msg;
+  el.className  = `banner banner-${type}${msg ? ' visible' : ''}`;
+}
+
+function setLoading(on) {
+  const btn = document.getElementById('btn-refresh');
+  btn.disabled  = on;
+  btn.innerHTML = on ? '<span class="spin">⟳</span> Loading…' : '↻ Refresh';
+}
+
+// ─────────────────────────────────────────────────────────
+//  RENDER — TIMELINE  (OKR 1)
+// ─────────────────────────────────────────────────────────
+function renderTimeline(deals) {
+  let ontime = 0, delayed = 0, ahead = 0;
+
+  if (!deals.length) {
+    document.getElementById('tbody-timeline').innerHTML =
+      `<tr><td colspan="5" class="empty">No deal rows found — check the sheet tab name and row range in the config.</td></tr>`;
+    setBadge('badge-1', -1);
+    return;
+  }
+
+  const rows = deals.map(d => {
+    const status = getStatus(d);
+    const days   = parseFloat(d['Days Off']) || 0;
+    if (status === 'on_time') ontime++;
+    else if (status === 'ahead')   ahead++;
+    else if (status === 'delayed') delayed++;
+
+    const barPct = status === 'delayed'
+      ? Math.max(10, 100 - Math.min(100, (days / 30) * 100))
+      : (status === 'on_time' || status === 'ahead') ? 100 : 0;
+    const barClr = status === 'on_time' ? '#4caf50'
+      : status === 'ahead'   ? '#ff6b00'
+      : status === 'delayed' ? (days <= 7 ? '#ffb300' : '#f44336')
+      : '#2a2a2a';
+
+    return `<tr>
+      <td class="prop">${d['Property'] || '—'}</td>
+      <td class="tc mono dim">${d['Target Date'] || '—'}</td>
+      <td class="tc">${statusPill(status)}</td>
+      <td class="tc mono">${days || (d['Days Off'] || '—')}</td>
+      <td><div class="mini-bar-wrap"><div class="mini-bar" style="width:${barPct}%;background:${barClr}"></div></div></td>
+    </tr>`;
+  });
+
+  document.getElementById('tbody-timeline').innerHTML = rows.join('');
+  document.getElementById('t-total').textContent   = deals.length;
+  document.getElementById('t-ontime').textContent  = ontime;
+  document.getElementById('t-delayed').textContent = delayed;
+  document.getElementById('t-ahead').textContent   = ahead;
+
+  setBadge('badge-1', deals.length ? Math.round(((ontime + ahead) / deals.length) * 100) : -1);
+}
+
+// ─────────────────────────────────────────────────────────
+//  RENDER — BUDGET  (OKR 2)
+// ─────────────────────────────────────────────────────────
+function renderBudget(deals) {
+  let totBudget = 0, totPaid = 0, totProj = 0, under = 0;
+
+  if (!deals.length) {
+    document.getElementById('tbody-budget').innerHTML =
+      `<tr><td colspan="6" class="empty">No budget data found in sheet.</td></tr>`;
+    setBadge('badge-2', -1);
+    return;
+  }
+
+  const rows = deals.map(d => {
+    const budget   = parseMoney(d['Budget ($)']);
+    const paid     = parseMoney(d['Paid to Date ($)']);
+    const proj     = parseMoney(d['Projected Final ($)']);
+    // Variance in sheet = budget − projected (positive = under budget)
+    const variance = parseMoney(d['Variance ($)']);
+
+    totBudget += budget;
+    totPaid   += paid;
+    totProj   += proj;
+    if (variance >= 0) under++;
+
+    const compare = proj || paid || 0;
+    const barPct  = budget > 0 ? Math.min(100, (compare / budget) * 100) : 0;
+    const overFrac = budget > 0 ? Math.abs(variance) / budget : 0;
+    const barClr  = variance >= 0 ? '#4caf50' : overFrac <= 0.05 ? '#ffb300' : '#f44336';
+
+    return `<tr>
+      <td class="prop">${d['Property'] || '—'}</td>
+      <td class="tc mono">${budget ? Math.round(budget / 1000) : '—'}</td>
+      <td class="tc mono">${paid   ? Math.round(paid   / 1000) : '—'}</td>
+      <td class="tc mono">${proj   ? Math.round(proj   / 1000) : '—'}</td>
+      <td class="tc">${varPill(variance, budget)}</td>
+      <td><div class="mini-bar-wrap"><div class="mini-bar" style="width:${Math.min(100,Math.max(0,barPct))}%;background:${barClr}"></div></div></td>
+    </tr>`;
+  });
+
+  document.getElementById('tbody-budget').innerHTML   = rows.join('');
+  document.getElementById('b-total').textContent      = fmtK(totBudget);
+  document.getElementById('b-paid').textContent       = fmtK(totPaid);
+  document.getElementById('b-proj').textContent       = fmtK(totProj);
+  document.getElementById('b-under').textContent      = `${under} / ${deals.length}`;
+  document.getElementById('b-under-sub').textContent  = `of ${deals.length} deals`;
+
+  setBadge('badge-2', deals.length ? Math.round((under / deals.length) * 100) : -1);
+}
+
+// ─────────────────────────────────────────────────────────
+//  RENDER — LENDER PIPELINE  (OKR 3)
+// ─────────────────────────────────────────────────────────
+function renderPipeline(pipeline) {
+  // Drop SUMMARY section rows and blank rows
+  const rows = pipeline.filter(r =>
+    r['Property'] &&
+    !String(r['Property']).toUpperCase().startsWith('SUMMARY')
+  );
+
+  // Metrics
+  const funded  = rows.filter(r => r['Funded Date'] && String(r['Funded Date']).trim() !== '' && String(r['Funded Date']).trim() !== '–');
+  const daysArr = funded.map(r => parseFloat(r['Days to Close']) || 0).filter(d => d > 0);
+  const avgDays = daysArr.length
+    ? Math.round((daysArr.reduce((a, b) => a + b, 0) / daysArr.length) * 10) / 10
+    : 0;
+  const ourDelays   = rows.filter(r => String(r['Our Delay?'] || '').toLowerCase() === 'yes').length;
+  const loansTarget = 15;
+  const loansFunded = funded.length;
+  const loansPct    = Math.round((loansFunded / loansTarget) * 100);
+  const daysPct     = avgDays > 0 ? Math.round((avgDays / 21) * 100) : 0;
+
+  // Metric cards
+  document.getElementById('m3-closed').textContent = `${loansFunded} / ${loansTarget}`;
+  document.getElementById('m3-days').textContent   = avgDays ? `${avgDays}d` : '—';
+
+  // KR bars
+  document.getElementById('v3-loans').textContent   = `${loansFunded} / ${loansTarget}`;
+  applyBar('b3-loans', loansPct, false);
+
+  document.getElementById('v3-days').textContent = avgDays ? `${avgDays}d` : '—';
+  applyBar('b3-days', daysPct, true);
+
+  document.getElementById('v3-delays').textContent = `${ourDelays} incident${ourDelays !== 1 ? 's' : ''}`;
+  applyBar('b3-delays', ourDelays === 0 ? 0 : Math.min(100, ourDelays * 50), true);
+
+  // Badge
+  const score =
+    (loansPct >= 75 ? 40 : loansPct >= 40 ? 20 : 0) +
+    (avgDays > 0 && avgDays <= 21 ? 30 : avgDays > 21 ? 10 : 15) +
+    (ourDelays === 0 ? 30 : 0);
+  setBadge('badge-3', score);
+
+  // Pipeline table
+  if (!rows.length) {
+    document.getElementById('tbody-pipeline').innerHTML =
+      `<tr><td colspan="6" class="empty">No pipeline rows found in sheet.</td></tr>`;
+    return;
+  }
+
+  const tableRows = rows.map(r => {
+    const days     = parseFloat(r['Days to Close']);
+    const isDelay  = String(r['Our Delay?'] || '').toLowerCase() === 'yes';
+    const daysClr  = isNaN(days) ? 'var(--text3)' : days <= 21 ? '#4caf50' : '#f44336';
+    return `<tr>
+      <td class="prop">${r['Property'] || '—'}</td>
+      <td class="dim">${r['Lender'] || '—'}</td>
+      <td class="tc mono dim">${r['Submission Date'] || '—'}</td>
+      <td class="tc mono dim">${r['Funded Date'] || '—'}</td>
+      <td class="tc mono" style="color:${daysClr}">${isNaN(days) ? '—' : days}</td>
+      <td class="tc">
+        <span class="pill ${isDelay ? 'pill-red' : 'pill-green'}">${isDelay ? 'Yes' : 'No'}</span>
+      </td>
+    </tr>`;
+  });
+
+  document.getElementById('tbody-pipeline').innerHTML = tableRows.join('');
+}
+
+// ─────────────────────────────────────────────────────────
+//  MAIN LOAD
+// ─────────────────────────────────────────────────────────
+async function loadDashboard() {
+  setLoading(true);
+  showBanner('error', '');
+  showBanner('info', '');
+
+  try {
+    // Fetch both tabs in parallel
+    const [dealData, pipelineData] = await Promise.all([
+      fetchGviz(TABS.deals,    RANGES.deals),
+      fetchGviz(TABS.pipeline, RANGES.pipeline),
+    ]);
+
+    const deals = gvizToRows(dealData).filter(r =>
+      r['Property'] &&
+      !String(r['Property']).toUpperCase().includes('TOTAL')
+    );
+    const pipeline = gvizToRows(pipelineData).filter(r => r['Property']);
+
+    renderTimeline(deals);
+    renderBudget(deals);
+    renderPipeline(pipeline);
+
+    document.getElementById('last-synced').textContent =
+      'Synced ' + new Date().toLocaleTimeString();
+
+  } catch (e) {
+    showBanner('error',
+      `⚠ ${e.message}<br><br>` +
+      `<strong>Fix:</strong> Open your Google Sheet → Share → General access → ` +
+      `<em>Anyone with the link</em> → Viewer → Done. Then click Refresh.`
+    );
+    // Reset badges
+    ['badge-1','badge-2','badge-3'].forEach(id => setBadge(id, -1));
+  }
+
+  setLoading(false);
+}
+
+// ─────────────────────────────────────────────────────────
+//  BOOT
+// ─────────────────────────────────────────────────────────
+loadDashboard();
+
+// Auto-refresh every 5 minutes while page is open
+setInterval(loadDashboard, 5 * 60 * 1000);
+</script>
+</body>
+</html>
