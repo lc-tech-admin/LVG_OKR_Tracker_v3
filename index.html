@@ -415,7 +415,11 @@ const RANGES = {
 //  Requires: Sheet shared as "Anyone with link → Viewer"
 // ─────────────────────────────────────────────────────────
 async function fetchGviz(tabName, range) {
-  const q = new URLSearchParams({ tqx: 'out:json', sheet: tabName });
+  const q = new URLSearchParams({
+    tqx: 'out:json',
+    sheet: tabName,
+    headers: '1',   // ← explicitly tell gviz: first row of range = headers
+  });
   if (range) q.set('range', range);
   const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?${q}`;
 
@@ -430,18 +434,31 @@ async function fetchGviz(tabName, range) {
   return JSON.parse(text.slice(i, j));
 }
 
-// Convert gviz response to array of plain row objects keyed by column header
+// Convert gviz response to array of plain row objects.
+// Stores values BOTH by column label (e.g. "Property") AND by index (_0, _1…)
+// so lookups work even if gviz returns column IDs instead of labels.
 function gvizToRows(data) {
-  const cols = (data.table?.cols || []).map(c => (c.label || c.id || '').trim());
+  const cols = (data.table?.cols || []).map(c => (c.label || '').trim());
   return (data.table?.rows || [])
     .map(row => {
       const obj = {};
       (row.c || []).forEach((cell, i) => {
-        if (cols[i]) obj[cols[i]] = cell?.v ?? null;
+        const val = cell?.v ?? null;
+        obj[`_${i}`] = val;                          // always store by index
+        if (cols[i]) obj[cols[i]] = val;             // also store by name if available
       });
       return obj;
     })
-    .filter(r => Object.values(r).some(v => v !== null && v !== '' && v !== undefined));
+    .filter(r => Object.keys(r).some(k => !k.startsWith('_') ? r[k] !== null && r[k] !== '' : false)
+              || Object.keys(r).filter(k => k.startsWith('_')).some(k => r[k] !== null && r[k] !== ''));
+}
+
+// Get a value from a row by column name, with fallback to column index.
+// e.g. col(r, 'Property', 0) tries r['Property'] first, then r['_0']
+function col(row, name, idx) {
+  const byName = row[name];
+  if (byName !== null && byName !== undefined && byName !== '') return byName;
+  return row[`_${idx}`] ?? null;
 }
 
 // ─────────────────────────────────────────────────────────
@@ -486,11 +503,19 @@ function setBadge(id, score) {
   else { el.className = 'badge badge-red';   el.textContent = 'Off track'; }
 }
 
+// Column index maps — fallback when gviz returns IDs instead of labels
+// Lender Pipeline: 0=Property,1=Lender,2=Submission Date,3=Funded Date,
+//                  4=Days to Close,5=Our Delay?,6=Quarter,7=Notes
+const PC = { prop:0, lender:1, subDate:2, fundDate:3, days:4, delay:5, quarter:6 };
+// Deal Detail: 0=Property,1=Target Date,3=Days Off,4=On Time?,
+//              5=Budget($),6=Paid($),7=Projected($),8=Variance($)
+const DC = { prop:0, targetDate:1, daysOff:3, onTime:4, budget:5, paid:6, projected:7, variance:8 };
+
 // Work out on-time status from the row data
 function getStatus(row) {
-  const raw  = String(row['On Time?'] || '').trim().toLowerCase();
-  const days = parseFloat(row['Days Off']) || 0;
-  if (raw.includes('on time') || raw.includes('✅')) return 'on_time';
+  const raw  = String(col(row, 'On Time?', DC.onTime) || '').trim().toLowerCase();
+  const days = parseFloat(col(row, 'Days Off', DC.daysOff)) || 0;
+  if (raw.includes('on time') || raw.includes('\u2705')) return 'on_time';
   if (raw.includes('ahead') || days < 0)              return 'ahead';
   if (days > 0)                                        return 'delayed';
   return 'pending';
@@ -543,7 +568,7 @@ function renderTimeline(deals) {
 
   const rows = deals.map(d => {
     const status = getStatus(d);
-    const days   = parseFloat(d['Days Off']) || 0;
+    const days   = parseFloat(col(d, 'Days Off', DC.daysOff)) || 0;
     if (status === 'on_time') ontime++;
     else if (status === 'ahead')   ahead++;
     else if (status === 'delayed') delayed++;
@@ -555,12 +580,14 @@ function renderTimeline(deals) {
       : status === 'ahead'   ? '#ff6b00'
       : status === 'delayed' ? (days <= 7 ? '#ffb300' : '#f44336')
       : '#2a2a2a';
+    const prop       = col(d, 'Property',    DC.prop)       || '—';
+    const targetDate = col(d, 'Target Date', DC.targetDate) || '—';
 
     return `<tr>
-      <td class="prop">${d['Property'] || '—'}</td>
-      <td class="tc mono dim">${d['Target Date'] || '—'}</td>
+      <td class="prop">${prop}</td>
+      <td class="tc mono dim">${targetDate}</td>
       <td class="tc">${statusPill(status)}</td>
-      <td class="tc mono">${days || (d['Days Off'] || '—')}</td>
+      <td class="tc mono">${days || '—'}</td>
       <td><div class="mini-bar-wrap"><div class="mini-bar" style="width:${barPct}%;background:${barClr}"></div></div></td>
     </tr>`;
   });
@@ -588,24 +615,24 @@ function renderBudget(deals) {
   }
 
   const rows = deals.map(d => {
-    const budget   = parseMoney(d['Budget ($)']);
-    const paid     = parseMoney(d['Paid to Date ($)']);
-    const proj     = parseMoney(d['Projected Final ($)']);
-    // Variance in sheet = budget − projected (positive = under budget)
-    const variance = parseMoney(d['Variance ($)']);
+    const budget   = parseMoney(col(d, 'Budget ($)',           DC.budget));
+    const paid     = parseMoney(col(d, 'Paid to Date ($)',     DC.paid));
+    const proj     = parseMoney(col(d, 'Projected Final ($)',  DC.projected));
+    const variance = parseMoney(col(d, 'Variance ($)',         DC.variance));
+    const prop     = col(d, 'Property', DC.prop) || '—';
 
     totBudget += budget;
     totPaid   += paid;
     totProj   += proj;
     if (variance >= 0) under++;
 
-    const compare = proj || paid || 0;
-    const barPct  = budget > 0 ? Math.min(100, (compare / budget) * 100) : 0;
+    const compare  = proj || paid || 0;
+    const barPct   = budget > 0 ? Math.min(100, (compare / budget) * 100) : 0;
     const overFrac = budget > 0 ? Math.abs(variance) / budget : 0;
-    const barClr  = variance >= 0 ? '#4caf50' : overFrac <= 0.05 ? '#ffb300' : '#f44336';
+    const barClr   = variance >= 0 ? '#4caf50' : overFrac <= 0.05 ? '#ffb300' : '#f44336';
 
     return `<tr>
-      <td class="prop">${d['Property'] || '—'}</td>
+      <td class="prop">${prop}</td>
       <td class="tc mono">${budget ? Math.round(budget / 1000) : '—'}</td>
       <td class="tc mono">${paid   ? Math.round(paid   / 1000) : '—'}</td>
       <td class="tc mono">${proj   ? Math.round(proj   / 1000) : '—'}</td>
@@ -628,19 +655,27 @@ function renderBudget(deals) {
 //  RENDER — LENDER PIPELINE  (OKR 3)
 // ─────────────────────────────────────────────────────────
 function renderPipeline(pipeline) {
-  // Drop SUMMARY section rows and blank rows
-  const rows = pipeline.filter(r =>
-    r['Property'] &&
-    !String(r['Property']).toUpperCase().startsWith('SUMMARY')
-  );
+  // Use col() helper with PC indexes so it works whether gviz returned
+  // column labels ("Property") or column IDs ("A", "B"...).
+  const rows = pipeline.filter(r => {
+    const prop = col(r, 'Property', PC.prop);
+    return prop && !String(prop).toUpperCase().startsWith('SUMMARY');
+  });
 
-  // Metrics
-  const funded  = rows.filter(r => r['Funded Date'] && String(r['Funded Date']).trim() !== '' && String(r['Funded Date']).trim() !== '–');
-  const daysArr = funded.map(r => parseFloat(r['Days to Close']) || 0).filter(d => d > 0);
+  // Metrics — check Funded Date by name AND index
+  const funded  = rows.filter(r => {
+    const fd = col(r, 'Funded Date', PC.fundDate);
+    return fd && String(fd).trim() !== '' && String(fd).trim() !== '–' && String(fd).trim() !== '-';
+  });
+  const daysArr = funded
+    .map(r => parseFloat(col(r, 'Days to Close', PC.days)) || 0)
+    .filter(d => d > 0);
   const avgDays = daysArr.length
     ? Math.round((daysArr.reduce((a, b) => a + b, 0) / daysArr.length) * 10) / 10
     : 0;
-  const ourDelays   = rows.filter(r => String(r['Our Delay?'] || '').toLowerCase() === 'yes').length;
+  const ourDelays   = rows.filter(r =>
+    String(col(r, 'Our Delay?', PC.delay) || '').toLowerCase() === 'yes'
+  ).length;
   const loansTarget = 15;
   const loansFunded = funded.length;
   const loansPct    = Math.round((loansFunded / loansTarget) * 100);
@@ -651,7 +686,7 @@ function renderPipeline(pipeline) {
   document.getElementById('m3-days').textContent   = avgDays ? `${avgDays}d` : '—';
 
   // KR bars
-  document.getElementById('v3-loans').textContent   = `${loansFunded} / ${loansTarget}`;
+  document.getElementById('v3-loans').textContent = `${loansFunded} / ${loansTarget}`;
   applyBar('b3-loans', loansPct, false);
 
   document.getElementById('v3-days').textContent = avgDays ? `${avgDays}d` : '—';
@@ -670,19 +705,23 @@ function renderPipeline(pipeline) {
   // Pipeline table
   if (!rows.length) {
     document.getElementById('tbody-pipeline').innerHTML =
-      `<tr><td colspan="6" class="empty">No pipeline rows found in sheet.</td></tr>`;
+      `<tr><td colspan="6" class="empty">No pipeline rows found — check tab name matches exactly.</td></tr>`;
     return;
   }
 
   const tableRows = rows.map(r => {
-    const days     = parseFloat(r['Days to Close']);
-    const isDelay  = String(r['Our Delay?'] || '').toLowerCase() === 'yes';
-    const daysClr  = isNaN(days) ? 'var(--text3)' : days <= 21 ? '#4caf50' : '#f44336';
+    const prop    = col(r, 'Property',        PC.prop)     || '—';
+    const lender  = col(r, 'Lender',          PC.lender)   || '—';
+    const subDate = col(r, 'Submission Date', PC.subDate)  || '—';
+    const funDate = col(r, 'Funded Date',     PC.fundDate) || '—';
+    const days    = parseFloat(col(r, 'Days to Close', PC.days));
+    const isDelay = String(col(r, 'Our Delay?', PC.delay) || '').toLowerCase() === 'yes';
+    const daysClr = isNaN(days) ? 'var(--text3)' : days <= 21 ? '#4caf50' : '#f44336';
     return `<tr>
-      <td class="prop">${r['Property'] || '—'}</td>
-      <td class="dim">${r['Lender'] || '—'}</td>
-      <td class="tc mono dim">${r['Submission Date'] || '—'}</td>
-      <td class="tc mono dim">${r['Funded Date'] || '—'}</td>
+      <td class="prop">${prop}</td>
+      <td class="dim">${lender}</td>
+      <td class="tc mono dim">${subDate}</td>
+      <td class="tc mono dim">${funDate}</td>
       <td class="tc mono" style="color:${daysClr}">${isNaN(days) ? '—' : days}</td>
       <td class="tc">
         <span class="pill ${isDelay ? 'pill-red' : 'pill-green'}">${isDelay ? 'Yes' : 'No'}</span>
@@ -708,11 +747,11 @@ async function loadDashboard() {
       fetchGviz(TABS.pipeline, RANGES.pipeline),
     ]);
 
-    const deals = gvizToRows(dealData).filter(r =>
-      r['Property'] &&
-      !String(r['Property']).toUpperCase().includes('TOTAL')
-    );
-    const pipeline = gvizToRows(pipelineData).filter(r => r['Property']);
+    const deals = gvizToRows(dealData).filter(r => {
+      const p = col(r, 'Property', DC.prop);
+      return p && !String(p).toUpperCase().includes('TOTAL');
+    });
+    const pipeline = gvizToRows(pipelineData).filter(r => col(r, 'Property', PC.prop));
 
     renderTimeline(deals);
     renderBudget(deals);
