@@ -275,15 +275,16 @@ footer {
     <table class="data-table">
       <thead>
         <tr>
-          <th style="width:230px">Property</th>
+          <th style="width:200px">Property</th>
+          <th class="tc">Start date</th>
           <th class="tc">Target date</th>
-          <th class="tc">Status</th>
+          <th class="tc">Actual / date</th>
           <th class="tc">Days off</th>
-          <th style="width:110px">Timeline</th>
+          <th class="tc">On time?</th>
         </tr>
       </thead>
       <tbody id="tbody-timeline">
-        <tr><td colspan="5" class="empty">Fetching data from Google Sheets…</td></tr>
+        <tr><td colspan="6" class="empty">Fetching data from Google Sheets…</td></tr>
       </tbody>
     </table>
   </div>
@@ -295,14 +296,14 @@ footer {
     <div class="okr-header">
       <div>
         <div class="okr-title">Budget control and construction spend</div>
-        <div class="okr-meta">Approved budget vs paid to date vs projected final — tracked per deal</div>
+        <div class="okr-meta">Approved budget vs projected final — tracked per deal</div>
       </div>
       <span class="badge badge-gray" id="badge-2">Loading…</span>
     </div>
     <div class="summary-strip">
       <div class="sum-card"><div class="sum-label">Total budget</div><div class="sum-val" id="b-total">—</div></div>
-      <div class="sum-card"><div class="sum-label">Paid to date</div><div class="sum-val" id="b-paid">—</div></div>
       <div class="sum-card"><div class="sum-label">Projected total</div><div class="sum-val" id="b-proj">—</div></div>
+      <div class="sum-card"><div class="sum-label">Total variance</div><div class="sum-val" id="b-var">—</div><div class="sum-sub" id="b-var-sub"></div></div>
       <div class="sum-card"><div class="sum-label">Under budget</div><div class="sum-val" id="b-under">—</div><div class="sum-sub" id="b-under-sub"></div></div>
     </div>
     <table class="data-table">
@@ -310,9 +311,9 @@ footer {
         <tr>
           <th style="width:230px">Property</th>
           <th class="tc">Budget ($K)</th>
-          <th class="tc">Paid ($K)</th>
           <th class="tc">Projected ($K)</th>
-          <th class="tc">Variance</th>
+          <th class="tc">Variance ($K)</th>
+          <th class="tc">Variance %</th>
           <th style="width:110px">vs Budget</th>
         </tr>
       </thead>
@@ -403,22 +404,22 @@ const TABS = {
   pipeline: 'Lender Pipeline',
 };
 
-// Row ranges — A[n] means the header row is at row n in the sheet
-// Change these if you add/remove title rows at the top of your sheets
+// Row ranges — header row is the first row of the range
+// Deal Detail: row 3 = headers, rows 4-13 = 10 properties, row 14 = blank, row 15 = TOTALS (excluded)
+// Pipeline:    row 3 = headers, rows 4+ = data
 const RANGES = {
-  deals:    'A3:J60',   // Deal Detail: row 3 = headers, rows 4+ = data
-  pipeline: 'A3:H40',  // Lender Pipeline: row 3 = headers, rows 4+ = data
+  deals:    'A3:I14',   // A:I covers Property through Variance ($)  — stops before TOTALS row
+  pipeline: 'A3:H40',
 };
 
 // ─────────────────────────────────────────────────────────
 //  GOOGLE SHEETS FETCH  (gviz API — no API key needed)
-//  Requires: Sheet shared as "Anyone with link → Viewer"
 // ─────────────────────────────────────────────────────────
 async function fetchGviz(tabName, range) {
   const q = new URLSearchParams({
     tqx: 'out:json',
     sheet: tabName,
-    headers: '1',   // ← explicitly tell gviz: first row of range = headers
+    headers: '1',
   });
   if (range) q.set('range', range);
   const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?${q}`;
@@ -435,8 +436,8 @@ async function fetchGviz(tabName, range) {
 }
 
 // Convert gviz response to array of plain row objects.
-// Stores values BOTH by column label (e.g. "Property") AND by index (_0, _1…)
-// so lookups work even if gviz returns column IDs instead of labels.
+// Stores values BOTH by column label AND by index (_0, _1…).
+// Also keeps formatted strings (cell.f) when present — useful for dates/currency.
 function gvizToRows(data) {
   const cols = (data.table?.cols || []).map(c => (c.label || '').trim());
   return (data.table?.rows || [])
@@ -444,21 +445,47 @@ function gvizToRows(data) {
       const obj = {};
       (row.c || []).forEach((cell, i) => {
         const val = cell?.v ?? null;
-        obj[`_${i}`] = val;                          // always store by index
-        if (cols[i]) obj[cols[i]] = val;             // also store by name if available
+        const fmt = cell?.f ?? null;          // formatted display string from sheet
+        obj[`_${i}`]    = val;
+        obj[`_${i}_f`]  = fmt;
+        if (cols[i]) {
+          obj[cols[i]]         = val;
+          obj[cols[i] + '__f'] = fmt;
+        }
       });
       return obj;
     })
-    .filter(r => Object.keys(r).some(k => !k.startsWith('_') ? r[k] !== null && r[k] !== '' : false)
-              || Object.keys(r).filter(k => k.startsWith('_')).some(k => r[k] !== null && r[k] !== ''));
+    .filter(r => Object.keys(r).filter(k => k.startsWith('_') && !k.endsWith('_f'))
+                              .some(k => r[k] !== null && r[k] !== ''));
 }
 
-// Get a value from a row by column name, with fallback to column index.
-// e.g. col(r, 'Property', 0) tries r['Property'] first, then r['_0']
+// Get raw value by name with fallback to index
 function col(row, name, idx) {
   const byName = row[name];
   if (byName !== null && byName !== undefined && byName !== '') return byName;
   return row[`_${idx}`] ?? null;
+}
+
+// Get formatted display value (used for dates) — falls back to raw, then prettifies gviz Date()
+function colFmt(row, name, idx) {
+  const fmt = row[name + '__f'] ?? row[`_${idx}_f`];
+  if (fmt) return fmt;
+  const raw = col(row, name, idx);
+  return prettifyDate(raw);
+}
+
+// gviz returns dates as strings like "Date(2026,5,15)" — month is 0-indexed.
+// Convert to "M/D" format. Pass through anything that isn't a Date() string.
+function prettifyDate(v) {
+  if (v === null || v === undefined || v === '') return '—';
+  const s = String(v).trim();
+  const m = s.match(/^Date\((\d+),(\d+),(\d+)/);
+  if (m) {
+    const month = parseInt(m[2], 10) + 1;  // gviz months are 0-indexed
+    const day   = parseInt(m[3], 10);
+    return `${month}/${day}`;
+  }
+  return s;
 }
 
 // ─────────────────────────────────────────────────────────
@@ -472,7 +499,8 @@ function parseMoney(v) {
 
 function fmtK(n) {
   if (!n) return '—';
-  return '$' + Math.round(n / 1000) + 'K';
+  const sign = n < 0 ? '-' : '';
+  return sign + '$' + Math.abs(Math.round(n / 1000)) + 'K';
 }
 
 function barColor(pct, inverse = false) {
@@ -503,15 +531,22 @@ function setBadge(id, score) {
   else { el.className = 'badge badge-red';   el.textContent = 'Off track'; }
 }
 
-// Column index maps — fallback when gviz returns IDs instead of labels
-// Lender Pipeline: 0=Property,1=Lender,2=Submission Date,3=Funded Date,
-//                  4=Days to Close,5=Our Delay?,6=Quarter,7=Notes
-const PC = { prop:0, lender:1, subDate:2, fundDate:3, days:4, delay:5, quarter:6 };
-// Deal Detail: 0=Property,1=Target Date,3=Days Off,4=On Time?,
-//              5=Budget($),6=Paid($),7=Projected($),8=Variance($)
-const DC = { prop:0, targetDate:1, daysOff:3, onTime:4, budget:5, paid:6, projected:7, variance:8 };
+// Column index maps
+// Deal Detail (sheet columns):
+//   0=Property, 1=Start Date, 2=Target Date, 3=Actual/Date,
+//   4=Days Off, 5=On Time?, 6=Budget($), 7=Projected Final($), 8=Variance($)
+const DC = {
+  prop:0, startDate:1, targetDate:2, actualDate:3,
+  daysOff:4, onTime:5,
+  budget:6, projected:7, variance:8
+};
 
-// Work out on-time status from the row data
+// Lender Pipeline:
+//   0=Property,1=Lender,2=Submission Date,3=Funded Date,
+//   4=Days to Close,5=Our Delay?,6=Quarter,7=Notes
+const PC = { prop:0, lender:1, subDate:2, fundDate:3, days:4, delay:5, quarter:6 };
+
+// Determine on-time status from row data
 function getStatus(row) {
   const raw  = String(col(row, 'On Time?', DC.onTime) || '').trim().toLowerCase();
   const days = parseFloat(col(row, 'Days Off', DC.daysOff)) || 0;
@@ -532,12 +567,16 @@ function statusPill(s) {
   return `<span class="${cls}">${label}</span>`;
 }
 
+// Variance pill — note: in this sheet, POSITIVE variance = under budget (good)
+// because Variance = Budget - Projected. Negative variance = over budget (bad).
 function varPill(variance, budget) {
   if (!budget) return `<span class="pill pill-gray var-pill">—</span>`;
-  const absPct = Math.abs(Math.round((variance / budget) * 100));
-  if (variance >= 0)          return `<span class="pill pill-green  var-pill">-${absPct}%</span>`;
-  if (absPct <= 5)            return `<span class="pill pill-amber  var-pill">+${absPct}%</span>`;
-  return                             `<span class="pill pill-red    var-pill">+${absPct}%</span>`;
+  const pct    = Math.round((variance / budget) * 100);
+  const absPct = Math.abs(pct);
+  if (variance > 0)            return `<span class="pill pill-green var-pill">+${absPct}%</span>`;  // under budget
+  if (variance === 0)          return `<span class="pill pill-gray var-pill">0%</span>`;
+  if (absPct <= 5)             return `<span class="pill pill-amber var-pill">-${absPct}%</span>`;  // slightly over
+  return                              `<span class="pill pill-red var-pill">-${absPct}%</span>`;     // over budget
 }
 
 function showBanner(type, msg) {
@@ -554,14 +593,14 @@ function setLoading(on) {
 }
 
 // ─────────────────────────────────────────────────────────
-//  RENDER — TIMELINE  (OKR 1)
+//  RENDER — TIMELINE  (OKR 1)  — pulls cols A:F
 // ─────────────────────────────────────────────────────────
 function renderTimeline(deals) {
   let ontime = 0, delayed = 0, ahead = 0;
 
   if (!deals.length) {
     document.getElementById('tbody-timeline').innerHTML =
-      `<tr><td colspan="5" class="empty">No deal rows found — check the sheet tab name and row range in the config.</td></tr>`;
+      `<tr><td colspan="6" class="empty">No deal rows found — check the sheet tab name and row range in the config.</td></tr>`;
     setBadge('badge-1', -1);
     return;
   }
@@ -573,22 +612,19 @@ function renderTimeline(deals) {
     else if (status === 'ahead')   ahead++;
     else if (status === 'delayed') delayed++;
 
-    const barPct = status === 'delayed'
-      ? Math.max(10, 100 - Math.min(100, (days / 30) * 100))
-      : (status === 'on_time' || status === 'ahead') ? 100 : 0;
-    const barClr = status === 'on_time' ? '#4caf50'
-      : status === 'ahead'   ? '#ff6b00'
-      : status === 'delayed' ? (days <= 7 ? '#ffb300' : '#f44336')
-      : '#2a2a2a';
-    const prop       = col(d, 'Property',    DC.prop)       || '—';
-    const targetDate = col(d, 'Target Date', DC.targetDate) || '—';
+    const prop       = col(d, 'Property', DC.prop) || '—';
+    const startDate  = colFmt(d, 'Start Date',   DC.startDate);
+    const targetDate = colFmt(d, 'Target Date',  DC.targetDate);
+    const actualDate = colFmt(d, 'Actual / Date', DC.actualDate);
+    const daysOffDisp = (col(d, 'Days Off', DC.daysOff) === null || col(d, 'Days Off', DC.daysOff) === '' || col(d, 'Days Off', DC.daysOff) === '–') ? '—' : days;
 
     return `<tr>
       <td class="prop">${prop}</td>
+      <td class="tc mono dim">${startDate}</td>
       <td class="tc mono dim">${targetDate}</td>
+      <td class="tc mono dim">${actualDate}</td>
+      <td class="tc mono">${daysOffDisp}</td>
       <td class="tc">${statusPill(status)}</td>
-      <td class="tc mono">${days || '—'}</td>
-      <td><div class="mini-bar-wrap"><div class="mini-bar" style="width:${barPct}%;background:${barClr}"></div></div></td>
     </tr>`;
   });
 
@@ -598,14 +634,20 @@ function renderTimeline(deals) {
   document.getElementById('t-delayed').textContent = delayed;
   document.getElementById('t-ahead').textContent   = ahead;
 
-  setBadge('badge-1', deals.length ? Math.round(((ontime + ahead) / deals.length) * 100) : -1);
+  // Score = % of deals that have an actual completion status (on time + ahead)
+  // Pending deals don't count against the score
+  const completed = ontime + ahead + delayed;
+  const score = completed > 0
+    ? Math.round(((ontime + ahead) / completed) * 100)
+    : -1;  // all pending — show grey
+  setBadge('badge-1', score);
 }
 
 // ─────────────────────────────────────────────────────────
-//  RENDER — BUDGET  (OKR 2)
+//  RENDER — BUDGET  (OKR 2)  — pulls cols A and G:I only
 // ─────────────────────────────────────────────────────────
 function renderBudget(deals) {
-  let totBudget = 0, totPaid = 0, totProj = 0, under = 0;
+  let totBudget = 0, totProj = 0, totVar = 0, under = 0, withProj = 0;
 
   if (!deals.length) {
     document.getElementById('tbody-budget').innerHTML =
@@ -615,55 +657,81 @@ function renderBudget(deals) {
   }
 
   const rows = deals.map(d => {
-    const budget   = parseMoney(col(d, 'Budget ($)',           DC.budget));
-    const paid     = parseMoney(col(d, 'Paid to Date ($)',     DC.paid));
-    const proj     = parseMoney(col(d, 'Projected Final ($)',  DC.projected));
-    const variance = parseMoney(col(d, 'Variance ($)',         DC.variance));
+    const budget   = parseMoney(col(d, 'Budget ($)',          DC.budget));
+    const proj     = parseMoney(col(d, 'Projected Final ($)', DC.projected));
+    const variance = parseMoney(col(d, 'Variance ($)',        DC.variance));
     const prop     = col(d, 'Property', DC.prop) || '—';
 
     totBudget += budget;
-    totPaid   += paid;
-    totProj   += proj;
-    if (variance >= 0) under++;
+    if (proj) {
+      totProj += proj;
+      withProj++;
+      if (variance >= 0) under++;
+    }
+    totVar += variance;
 
-    const compare  = proj || paid || 0;
-    const barPct   = budget > 0 ? Math.min(100, (compare / budget) * 100) : 0;
+    // Bar shows projected as % of budget
+    const barPct = budget > 0 && proj > 0 ? Math.min(120, (proj / budget) * 100) : 0;
+    // Variance > 0 means under budget (good). Variance < 0 means over (bad).
     const overFrac = budget > 0 ? Math.abs(variance) / budget : 0;
-    const barClr   = variance >= 0 ? '#4caf50' : overFrac <= 0.05 ? '#ffb300' : '#f44336';
+    let barClr;
+    if (!proj)                  barClr = 'var(--surface3)';
+    else if (variance >= 0)     barClr = '#4caf50';
+    else if (overFrac <= 0.05)  barClr = '#ffb300';
+    else                        barClr = '#f44336';
+
+    // Variance dollar display: positive = under budget (green), negative = over (red)
+    const varDisp = !proj
+      ? '—'
+      : (variance === 0 ? '0' : (variance > 0 ? '+' : '') + Math.round(variance / 1000));
 
     return `<tr>
       <td class="prop">${prop}</td>
       <td class="tc mono">${budget ? Math.round(budget / 1000) : '—'}</td>
-      <td class="tc mono">${paid   ? Math.round(paid   / 1000) : '—'}</td>
       <td class="tc mono">${proj   ? Math.round(proj   / 1000) : '—'}</td>
-      <td class="tc">${varPill(variance, budget)}</td>
+      <td class="tc mono">${varDisp}</td>
+      <td class="tc">${proj ? varPill(variance, budget) : '<span class="pill pill-gray var-pill">—</span>'}</td>
       <td><div class="mini-bar-wrap"><div class="mini-bar" style="width:${Math.min(100,Math.max(0,barPct))}%;background:${barClr}"></div></div></td>
     </tr>`;
   });
 
   document.getElementById('tbody-budget').innerHTML   = rows.join('');
   document.getElementById('b-total').textContent      = fmtK(totBudget);
-  document.getElementById('b-paid').textContent       = fmtK(totPaid);
-  document.getElementById('b-proj').textContent       = fmtK(totProj);
-  document.getElementById('b-under').textContent      = `${under} / ${deals.length}`;
-  document.getElementById('b-under-sub').textContent  = `of ${deals.length} deals`;
+  document.getElementById('b-proj').textContent       = withProj > 0 ? fmtK(totProj) : '—';
 
-  setBadge('badge-2', deals.length ? Math.round((under / deals.length) * 100) : -1);
+  // Total variance display
+  const varEl = document.getElementById('b-var');
+  if (withProj === 0) {
+    varEl.textContent = '—';
+    varEl.style.color = 'var(--orange)';
+    document.getElementById('b-var-sub').textContent = 'awaiting projections';
+  } else {
+    const sign = totVar > 0 ? '+' : (totVar < 0 ? '-' : '');
+    varEl.textContent = sign + '$' + Math.abs(Math.round(totVar / 1000)) + 'K';
+    varEl.style.color = totVar >= 0 ? 'var(--green)' : 'var(--red)';
+    document.getElementById('b-var-sub').textContent =
+      totVar >= 0 ? 'under projection' : 'over projection';
+  }
+
+  document.getElementById('b-under').textContent      = withProj > 0 ? `${under} / ${withProj}` : '—';
+  document.getElementById('b-under-sub').textContent  = withProj > 0
+    ? `of ${withProj} projected`
+    : 'no projections yet';
+
+  // Score: % of projected deals that are at or under budget
+  setBadge('badge-2', withProj > 0 ? Math.round((under / withProj) * 100) : -1);
 }
 
 // ─────────────────────────────────────────────────────────
 //  RENDER — LENDER PIPELINE  (OKR 3)
 // ─────────────────────────────────────────────────────────
 function renderPipeline(pipeline) {
-  // Use col() helper with PC indexes so it works whether gviz returned
-  // column labels ("Property") or column IDs ("A", "B"...).
   const rows = pipeline.filter(r => {
     const prop = col(r, 'Property', PC.prop);
     return prop && !String(prop).toUpperCase().startsWith('SUMMARY');
   });
 
-  // Metrics — check Funded Date by name AND index
-  const funded  = rows.filter(r => {
+  const funded = rows.filter(r => {
     const fd = col(r, 'Funded Date', PC.fundDate);
     return fd && String(fd).trim() !== '' && String(fd).trim() !== '–' && String(fd).trim() !== '-';
   });
@@ -681,11 +749,9 @@ function renderPipeline(pipeline) {
   const loansPct    = Math.round((loansFunded / loansTarget) * 100);
   const daysPct     = avgDays > 0 ? Math.round((avgDays / 21) * 100) : 0;
 
-  // Metric cards
   document.getElementById('m3-closed').textContent = `${loansFunded} / ${loansTarget}`;
   document.getElementById('m3-days').textContent   = avgDays ? `${avgDays}d` : '—';
 
-  // KR bars
   document.getElementById('v3-loans').textContent = `${loansFunded} / ${loansTarget}`;
   applyBar('b3-loans', loansPct, false);
 
@@ -695,14 +761,12 @@ function renderPipeline(pipeline) {
   document.getElementById('v3-delays').textContent = `${ourDelays} incident${ourDelays !== 1 ? 's' : ''}`;
   applyBar('b3-delays', ourDelays === 0 ? 0 : Math.min(100, ourDelays * 50), true);
 
-  // Badge
   const score =
     (loansPct >= 75 ? 40 : loansPct >= 40 ? 20 : 0) +
     (avgDays > 0 && avgDays <= 21 ? 30 : avgDays > 21 ? 10 : 15) +
     (ourDelays === 0 ? 30 : 0);
   setBadge('badge-3', score);
 
-  // Pipeline table
   if (!rows.length) {
     document.getElementById('tbody-pipeline').innerHTML =
       `<tr><td colspan="6" class="empty">No pipeline rows found — check tab name matches exactly.</td></tr>`;
@@ -712,8 +776,8 @@ function renderPipeline(pipeline) {
   const tableRows = rows.map(r => {
     const prop    = col(r, 'Property',        PC.prop)     || '—';
     const lender  = col(r, 'Lender',          PC.lender)   || '—';
-    const subDate = col(r, 'Submission Date', PC.subDate)  || '—';
-    const funDate = col(r, 'Funded Date',     PC.fundDate) || '—';
+    const subDate = colFmt(r, 'Submission Date', PC.subDate);
+    const funDate = colFmt(r, 'Funded Date',     PC.fundDate);
     const days    = parseFloat(col(r, 'Days to Close', PC.days));
     const isDelay = String(col(r, 'Our Delay?', PC.delay) || '').toLowerCase() === 'yes';
     const daysClr = isNaN(days) ? 'var(--text3)' : days <= 21 ? '#4caf50' : '#f44336';
@@ -741,7 +805,6 @@ async function loadDashboard() {
   showBanner('info', '');
 
   try {
-    // Fetch both tabs in parallel
     const [dealData, pipelineData] = await Promise.all([
       fetchGviz(TABS.deals,    RANGES.deals),
       fetchGviz(TABS.pipeline, RANGES.pipeline),
@@ -766,19 +829,13 @@ async function loadDashboard() {
       `<strong>Fix:</strong> Open your Google Sheet → Share → General access → ` +
       `<em>Anyone with the link</em> → Viewer → Done. Then click Refresh.`
     );
-    // Reset badges
     ['badge-1','badge-2','badge-3'].forEach(id => setBadge(id, -1));
   }
 
   setLoading(false);
 }
 
-// ─────────────────────────────────────────────────────────
-//  BOOT
-// ─────────────────────────────────────────────────────────
 loadDashboard();
-
-// Auto-refresh every 5 minutes while page is open
 setInterval(loadDashboard, 5 * 60 * 1000);
 </script>
 </body>
